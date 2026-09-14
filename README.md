@@ -97,25 +97,41 @@ targets with more records than one page never lose valid selections.
 
 ## Settings page
 
-Registered via `createSettingSection` as **Settings → Global Filters → Filters**:
-every `api::` collection type with its filterable fields grouped
-**Relations / Choices / Dates / Text**. Saving shows a **"Reload to apply"** prompt —
-the config is fetched once per page load and cached across admin chunks.
+Registered via `createSettingSection` as **Settings → Global Filters**.
 
-Config is stored in the plugin store under the key `filterConfig`:
+A master switch sits at the top, **off by default** — while it's off no filter
+bar is rendered anywhere, and field selections are kept for when it's switched
+back on. Turning it on reveals every `api::` collection type as an accordion,
+one open at a time, each holding that type's filterable fields grouped
+**Relations / Choices / Dates / Text**, with a **Clear** button on any type that
+has a selection.
+
+### Where settings are stored
+
+In the browser's **`localStorage`**, under the key `global-filters:config` — this
+plugin owns no database rows and has no write endpoint:
 
 ```jsonc
 {
-  "api::page.page": ["websites", "countries", "page_type", "title", "createdAt"]
+  "enabled": true,
+  "fields": {
+    "api::page.page": ["websites", "countries", "page_type", "title", "createdAt"]
+  }
 }
 ```
 
-Content types with no selected fields are dropped rather than stored empty, and
-the server re-validates every save against the same gate the settings UI uses:
-only `api::` collection types, and only fields whose attribute is actually
-filterable. Anything else — a single type, a plugin content type, an unknown or
-non-filterable field — is discarded regardless of what the request sends, so
-nothing can end up in the store that the UI can't manage.
+Only this admin bundle ever reads the selection, so a server round-trip bought
+nothing, and a cookie would have ridden along on every request to Strapi for no
+reason. The trade-off is deliberate: **settings are per-browser, not shared by
+the team.** They survive reloads, restarts and redeploys, and are lost by
+clearing site data, by a different browser, profile or machine, or in a private
+window. Content types with no selected fields are pruned rather than stored
+empty, and a corrupt or partly-junk stored value degrades to "nothing
+configured" instead of throwing. Saving in one tab reaches other open tabs
+through the `storage` event.
+
+The server keeps exactly one route, to describe the schema — it never sees the
+selection.
 
 ---
 
@@ -123,18 +139,18 @@ nothing can end up in the store that the UI can't manage.
 
 All routes are **admin-type** (authenticated admin), mounted under `/global-filters`.
 
-| Method | Path       | Body / input                             | Purpose                                          |
-| ------ | ---------- | ---------------------------------------- | ------------------------------------------------ |
-| GET    | `/config`  | —                                        | Per-content-type field list                      |
-| PUT    | `/config`  | `{ config: { "<uid>": ["field", …] } }`  | Save config (validated, returns the stored form) |
-| GET    | `/schema`  | —                                        | Filterable fields per content type + config      |
+| Method | Path       | Body / input | Purpose                             |
+| ------ | ---------- | ------------ | ----------------------------------- |
+| GET    | `/schema`  | —            | Filterable fields per content type  |
 
 ---
 
 ## Known limitations
 
-- **Off by default** for every content type — nothing appears until fields are
-  picked in Settings → Global Filters.
+- **Off by default** — the master switch starts off, and nothing appears until
+  it's on and fields are picked in Settings → Global Filters.
+- **Settings are per-browser.** There is no shared team default; each person
+  configures their own, and clearing site data resets them.
 - **Relation options are capped at 100 rows** per target and sorted client-side
   by label. A target with more entries shows the first page only, and stale-id
   pruning is skipped for it (a valid id is never dropped, but a dead one isn't

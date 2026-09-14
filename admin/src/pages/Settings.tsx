@@ -1,10 +1,23 @@
 import * as React from 'react';
-import { Box, Flex, Typography, Button, Checkbox, Divider, Modal } from '@strapi/design-system';
-import { Check, ArrowClockwise } from '@strapi/icons';
+import {
+  Accordion,
+  Box,
+  Button,
+  Checkbox,
+  Flex,
+  Switch,
+  Typography,
+} from '@strapi/design-system';
+import { Check } from '@strapi/icons';
 import { Layouts, Page, useFetchClient, useNotification } from '@strapi/strapi/admin';
 
 import { prettyLabel } from '../utils/scope';
-import { clearGlobalFiltersConfigCache, GlobalFiltersConfig } from '../utils/configClient';
+import {
+  EMPTY_CONFIG,
+  GlobalFiltersConfig,
+  readConfig,
+  writeConfig,
+} from '../utils/configClient';
 
 type AttrMeta = {
   type: 'relation' | 'enumeration' | 'boolean' | 'datetime' | 'text';
@@ -34,26 +47,27 @@ const GROUPS: Array<{ key: string; label: string; match: (a: AttrMeta) => boolea
   { key: 'text', label: 'Text', match: (a) => a.type === 'text' },
 ];
 
+const summarize = (count: number, total: number) =>
+  count === 0 ? `No filters — ${total} fields available` : `${count} of ${total} fields`;
+
 const SettingsPage = () => {
-  const { get, put } = useFetchClient();
+  const { get } = useFetchClient();
   const { toggleNotification } = useNotification();
 
   const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
-  const [showReload, setShowReload] = React.useState(false);
   const [contentTypes, setContentTypes] = React.useState<ContentTypeMeta[]>([]);
-  const [selection, setSelection] = React.useState<GlobalFiltersConfig>({});
+  const [config, setConfig] = React.useState<GlobalFiltersConfig>(EMPTY_CONFIG);
+  const [open, setOpen] = React.useState<string | undefined>(undefined);
 
   React.useEffect(() => {
+    setConfig(readConfig());
     let cancelled = false;
     get('/global-filters/schema')
       .then((res) => {
-        if (cancelled) return;
-        setContentTypes((res.data as any)?.contentTypes ?? []);
-        setSelection((res.data as any)?.config ?? {});
+        if (!cancelled) setContentTypes((res.data as any)?.contentTypes ?? []);
       })
       .catch(() => {
-        toggleNotification({ type: 'danger', message: 'Could not load the configuration.' });
+        toggleNotification({ type: 'danger', message: 'Could not load the content types.' });
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -63,29 +77,37 @@ const SettingsPage = () => {
     };
   }, [get, toggleNotification]);
 
+  const setEnabled = (enabled: boolean) => setConfig((prev) => ({ ...prev, enabled }));
+
   const toggleField = (uid: string, field: string) => {
-    setSelection((prev) => {
-      const fields = prev[uid] ?? [];
-      const next = fields.includes(field) ? fields.filter((f) => f !== field) : [...fields, field];
-      const updated = { ...prev };
-      if (next.length) updated[uid] = next;
-      else delete updated[uid];
-      return updated;
+    setConfig((prev) => {
+      const current = prev.fields[uid] ?? [];
+      const next = current.includes(field)
+        ? current.filter((f) => f !== field)
+        : [...current, field];
+      const fields = { ...prev.fields };
+      if (next.length) fields[uid] = next;
+      else delete fields[uid];
+      return { ...prev, fields };
     });
   };
 
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await put('/global-filters/config', { config: selection });
-      setSelection((res.data as any) ?? selection);
-      clearGlobalFiltersConfigCache();
-      toggleNotification({ type: 'success', message: 'Configuration saved.' });
-      setShowReload(true);
-    } catch {
-      toggleNotification({ type: 'danger', message: 'Could not save the configuration.' });
-    } finally {
-      setSaving(false);
+  const clearContentType = (uid: string) => {
+    setConfig((prev) => {
+      const fields = { ...prev.fields };
+      delete fields[uid];
+      return { ...prev, fields };
+    });
+  };
+
+  const save = () => {
+    if (writeConfig(config)) {
+      toggleNotification({ type: 'success', message: 'Settings saved in this browser.' });
+    } else {
+      toggleNotification({
+        type: 'danger',
+        message: 'This browser refused to store the settings (private mode or blocked site data).',
+      });
     }
   };
 
@@ -98,96 +120,111 @@ const SettingsPage = () => {
           title="Global Filters"
           subtitle="Fields chosen here appear as filters above every Content Manager list for that content type, and stay applied as you navigate."
           primaryAction={
-            <Button onClick={save} loading={saving} startIcon={<Check />}>
+            <Button onClick={save} startIcon={<Check />}>
               Save
             </Button>
           }
         />
         <Layouts.Content>
           <Flex direction="column" alignItems="stretch" gap={4}>
-            {contentTypes.map((ct) => {
-              const fields = selection[ct.uid] ?? [];
-              const attrs = Object.entries(ct.attributes);
-              return (
-                <Box
-                  key={ct.uid}
-                  padding={5}
-                  background="neutral0"
-                  hasRadius
-                  shadow="tableShadow"
-                  borderColor="neutral150"
-                >
-                  {/* header */}
-                  <Flex direction="column" alignItems="flex-start">
-                    <Typography variant="delta" tag="h2">
-                      {ct.displayName}
-                    </Typography>
-                    <Typography variant="pi" textColor="neutral500">
-                      {ct.uid}
-                    </Typography>
-                  </Flex>
+            <Box
+              padding={5}
+              background="neutral0"
+              hasRadius
+              shadow="tableShadow"
+              borderColor="neutral150"
+            >
+              <Flex justifyContent="space-between" alignItems="center" gap={4}>
+                <Flex direction="column" alignItems="flex-start" gap={1}>
+                  <Typography variant="delta" tag="h2">
+                    Enable global filters
+                  </Typography>
+                  <Typography variant="pi" textColor="neutral600">
+                    While this is off, no filter bar is rendered anywhere — your field
+                    selections are kept and come back when you switch it on again.
+                  </Typography>
+                </Flex>
+                <Switch
+                  checked={config.enabled}
+                  onCheckedChange={setEnabled}
+                  onLabel="On"
+                  offLabel="Off"
+                  aria-label="Enable global filters"
+                />
+              </Flex>
+            </Box>
 
-                  <Box paddingTop={3} paddingBottom={4}>
-                    <Divider />
-                  </Box>
-
-                  {/* filter fields, grouped by kind */}
-                  <Flex direction="column" alignItems="stretch" gap={4}>
-                    {GROUPS.map((group) => {
-                      const groupAttrs = attrs.filter(([, a]) => group.match(a));
-                      if (groupAttrs.length === 0) return null;
-                      return (
-                        <Box key={group.key}>
-                          <Typography variant="sigma" textColor="neutral600">
-                            {group.label}
+            {config.enabled ? (
+              <Accordion.Root value={open} onValueChange={setOpen} collapsible>
+                {contentTypes.map((ct) => {
+                  const selected = config.fields[ct.uid] ?? [];
+                  const attrs = Object.entries(ct.attributes);
+                  return (
+                    <Accordion.Item key={ct.uid} value={ct.uid}>
+                      <Accordion.Header>
+                        <Accordion.Trigger description={summarize(selected.length, attrs.length)}>
+                          {ct.displayName}
+                        </Accordion.Trigger>
+                        {selected.length > 0 ? (
+                          <Accordion.Actions>
+                            <Button
+                              variant="tertiary"
+                              size="S"
+                              onClick={() => clearContentType(ct.uid)}
+                            >
+                              Clear
+                            </Button>
+                          </Accordion.Actions>
+                        ) : null}
+                      </Accordion.Header>
+                      <Accordion.Content>
+                        <Box padding={5}>
+                          <Typography variant="pi" textColor="neutral500">
+                            {ct.uid}
                           </Typography>
-                          <Flex wrap="wrap" gap={4} paddingTop={2}>
-                            {groupAttrs.map(([name, attr]) => (
-                              <Checkbox
-                                key={name}
-                                checked={fields.includes(name)}
-                                onCheckedChange={() => toggleField(ct.uid, name)}
-                              >
-                                <Flex direction="column" alignItems="flex-start">
-                                  <Typography>{prettyLabel(name)}</Typography>
-                                  <Typography variant="pi" textColor="neutral500">
-                                    {attrHint(attr)}
+                          <Flex
+                            direction="column"
+                            alignItems="stretch"
+                            gap={4}
+                            paddingTop={3}
+                          >
+                            {GROUPS.map((group) => {
+                              const groupAttrs = attrs.filter(([, a]) => group.match(a));
+                              if (groupAttrs.length === 0) return null;
+                              return (
+                                <Box key={group.key}>
+                                  <Typography variant="sigma" textColor="neutral600">
+                                    {group.label}
                                   </Typography>
-                                </Flex>
-                              </Checkbox>
-                            ))}
+                                  <Flex wrap="wrap" gap={4} paddingTop={2}>
+                                    {groupAttrs.map(([name, attr]) => (
+                                      <Checkbox
+                                        key={name}
+                                        checked={selected.includes(name)}
+                                        onCheckedChange={() => toggleField(ct.uid, name)}
+                                      >
+                                        <Flex direction="column" alignItems="flex-start">
+                                          <Typography>{prettyLabel(name)}</Typography>
+                                          <Typography variant="pi" textColor="neutral500">
+                                            {attrHint(attr)}
+                                          </Typography>
+                                        </Flex>
+                                      </Checkbox>
+                                    ))}
+                                  </Flex>
+                                </Box>
+                              );
+                            })}
                           </Flex>
                         </Box>
-                      );
-                    })}
-                  </Flex>
-                </Box>
-              );
-            })}
+                      </Accordion.Content>
+                    </Accordion.Item>
+                  );
+                })}
+              </Accordion.Root>
+            ) : null}
           </Flex>
         </Layouts.Content>
-
-        <Modal.Root open={showReload} onOpenChange={setShowReload}>
-          <Modal.Content>
-            <Modal.Header>
-              <Modal.Title>Reload to apply</Modal.Title>
-            </Modal.Header>
-            <Modal.Body>
-              <Typography textColor="neutral700">
-                Configuration saved. Reload the page for the changes to take
-                effect across the Content Manager.
-              </Typography>
-            </Modal.Body>
-            <Modal.Footer>
-              <Button variant="tertiary" onClick={() => setShowReload(false)}>
-                Later
-              </Button>
-              <Button startIcon={<ArrowClockwise />} onClick={() => window.location.reload()}>
-                Reload now
-              </Button>
-            </Modal.Footer>
-          </Modal.Content>
-        </Modal.Root>
       </Page.Main>
     </Layouts.Root>
   );

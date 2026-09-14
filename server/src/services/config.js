@@ -1,13 +1,14 @@
 'use strict';
 
 /**
- * Per-content-type filter configuration.
+ * Read-only schema for the settings UI.
  *
- * Stored shape: { "<uid>": ["field", ...] }
- * Persisted in the plugin store, so the config is shared across all admins.
+ * The selection itself is not stored server-side at all — it lives in the
+ * browser's localStorage, so this plugin owns no database rows and needs no
+ * write endpoint. All this service does is describe which fields of which
+ * content types are filterable.
  */
 
-const STORE_KEY = 'filterConfig';
 const FILTERABLE_TYPES = ['relation', 'enumeration', 'boolean', 'datetime'];
 
 // Text-ish columns, filtered with a case-insensitive "contains" input.
@@ -20,8 +21,6 @@ const EXCLUDED_FIELDS = new Set(['createdBy', 'updatedBy', 'localizations']);
 const EXCLUDED_RELATION_TARGETS = new Set(['admin::user', 'plugin::users-permissions.user']);
 
 module.exports = ({ strapi }) => {
-  const store = () => strapi.store({ type: 'plugin', name: 'global-filters' });
-
   const isFilterableAttr = (name, attr) => {
     if (!attr || EXCLUDED_FIELDS.has(name)) return false;
     if (attr.type === 'relation') {
@@ -30,57 +29,13 @@ module.exports = ({ strapi }) => {
     return FILTERABLE_TYPES.includes(attr.type) || TEXT_TYPES.includes(attr.type);
   };
 
-  // Accepts both the bare array form and `{ fields: [...] }`, so a config
-  // written by an older/newer shape still reads.
-  const normalizeEntry = (raw) => {
-    if (Array.isArray(raw)) return [...new Set(raw)];
-    if (raw && typeof raw === 'object' && Array.isArray(raw.fields)) return [...new Set(raw.fields)];
-    return [];
-  };
-
-  const getConfig = async () => {
-    const stored = (await store().get({ key: STORE_KEY })) || {};
-    const out = {};
-    for (const [uid, raw] of Object.entries(stored)) {
-      const fields = normalizeEntry(raw);
-      if (fields.length) out[uid] = fields;
-    }
-    return out;
-  };
-
-  // The same gate getSchema() uses, so nothing can be stored that the settings
-  // UI never lists — an entry for a single type or a plugin content type would
-  // sit in the store unmanageable.
   const isConfigurable = (uid, ct) =>
     !!ct && uid.startsWith('api::') && ct.kind === 'collectionType';
 
-  const validFieldsFor = (uid, fields) => {
-    const ct = strapi.contentTypes[uid];
-    if (!isConfigurable(uid, ct)) return [];
-    return (Array.isArray(fields) ? fields : []).filter((field) => {
-      if (field === 'createdAt') return true;
-      if (field === 'publishedAt' && ct.options && ct.options.draftAndPublish) return true;
-      return isFilterableAttr(field, ct.attributes && ct.attributes[field]);
-    });
-  };
-
-  const setConfig = async (config) => {
-    const clean = {};
-    if (config && typeof config === 'object') {
-      for (const [uid, raw] of Object.entries(config)) {
-        if (!isConfigurable(uid, strapi.contentTypes[uid])) continue;
-        const fields = [...new Set(validFieldsFor(uid, normalizeEntry(raw)))];
-        if (fields.length) clean[uid] = fields;
-      }
-    }
-    await store().set({ key: STORE_KEY, value: clean });
-    return clean;
-  };
-
   /**
-   * Schema shown in the settings UI: every api:: collection type with its
-   * relation / enumeration / boolean / datetime / text attributes (noise
-   * excluded) plus the createdAt / publishedAt date-range filters.
+   * Every api:: collection type with its relation / enumeration / boolean /
+   * datetime / text attributes (noise excluded) plus the createdAt and
+   * publishedAt date-range filters.
    */
   const getSchema = () => {
     const out = [];
@@ -112,5 +67,5 @@ module.exports = ({ strapi }) => {
     return out;
   };
 
-  return { getConfig, setConfig, getSchema };
+  return { getSchema };
 };

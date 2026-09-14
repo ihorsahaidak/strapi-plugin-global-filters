@@ -10,18 +10,6 @@ module.exports = {
     routes: [
       {
         method: 'GET',
-        path: '/config',
-        handler: 'config.find',
-        config: { policies: [] },
-      },
-      {
-        method: 'PUT',
-        path: '/config',
-        handler: 'config.update',
-        config: { policies: [] },
-      },
-      {
-        method: 'GET',
         path: '/schema',
         handler: 'config.schema',
         config: { policies: [] },

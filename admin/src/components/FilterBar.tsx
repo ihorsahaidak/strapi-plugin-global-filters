@@ -16,7 +16,7 @@ import {
   unstable_useContentManagerContext as useContentManagerContext,
 } from '@strapi/strapi/admin';
 
-import { fetchGlobalFiltersConfig } from '../utils/configClient';
+import { readConfig, fieldsFor } from '../utils/configClient';
 import {
   Descriptor,
   readValues,
@@ -152,20 +152,19 @@ const FilterBar = () => {
   const [fields, setFields] = React.useState<string[] | null>(null);
   const [relOptions, setRelOptions] = React.useState<Record<string, OptionSet>>({});
 
-  // Load the configured filter fields for this content type.
+  // Configured fields come straight out of localStorage — no request, so they
+  // are available on the first render rather than a tick later.
   React.useEffect(() => {
     if (!model || collectionType !== 'collection-types') {
       setFields([]);
       return;
     }
-    let cancelled = false;
-    fetchGlobalFiltersConfig(get).then((cfg) => {
-      if (!cancelled) setFields(cfg[model] ?? []);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [model, collectionType, get]);
+    const apply = () => setFields(fieldsFor(readConfig(), model));
+    apply();
+    // Settings saved in another tab should reach this one too.
+    window.addEventListener('storage', apply);
+    return () => window.removeEventListener('storage', apply);
+  }, [model, collectionType]);
 
   const descriptors: Descriptor[] = React.useMemo(() => {
     if (collectionType !== 'collection-types') return [];
