@@ -110,6 +110,14 @@ the schema; it never sees your selection.
   you pause rather than once per keystroke.
 - The filter row is **portalled** next to the Content Manager's action bar,
   because `listView.actions` is the only injection zone Strapi exposes.
+- **A broken filter bar can't break your Content Manager.** The injected
+  component sits behind an error boundary: if a future Strapi release reshapes
+  the admin APIs it leans on — chiefly `unstable_useContentManagerContext` —
+  the bar quietly disappears and logs why, instead of taking the entry list
+  down with it. Nothing is stored server-side, so uninstalling is instant and
+  lossless.
+- **Selections are kept in a `SameSite=Lax` cookie**, marked `Secure` whenever
+  the admin is served over HTTPS.
 
 ## License
 

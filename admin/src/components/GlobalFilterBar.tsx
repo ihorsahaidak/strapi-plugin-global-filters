@@ -2,6 +2,7 @@ import * as React from 'react';
 import { createPortal } from 'react-dom';
 
 import FilterBar from './FilterBar';
+import FilterBarBoundary from './FilterBarBoundary';
 
 /**
  * The Content Manager only exposes the `listView.actions` toolbar zone for
@@ -10,7 +11,7 @@ import FilterBar from './FilterBar';
  * an invisible marker in the actions zone and portal the real filter UI into
  * a container inserted just before the action bar inside <main>.
  */
-const GlobalFilterBar = () => {
+const PortalledFilterBar = () => {
   const markerRef = React.useRef<HTMLSpanElement>(null);
   const [host, setHost] = React.useState<HTMLElement | null>(null);
 
@@ -52,5 +53,15 @@ const GlobalFilterBar = () => {
     </>
   );
 };
+
+/**
+ * Everything Strapi renders for this plugin inside the list view sits behind the
+ * boundary — the DOM walking above included, not just the controls.
+ */
+const GlobalFilterBar = () => (
+  <FilterBarBoundary>
+    <PortalledFilterBar />
+  </FilterBarBoundary>
+);
 
 export default GlobalFilterBar;

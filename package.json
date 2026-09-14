@@ -1,6 +1,6 @@
 {
   "name": "strapi-plugin-global-filters",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Always-on, sticky list filters for the Strapi 5 Content Manager: pick which fields become quick filters per content type; selections persist across reloads and navigation.",
   "keywords": [
     "strapi",
@@ -79,7 +79,7 @@
     "description": "Always-on, sticky list filters for the Content Manager, configurable per content type."
   },
   "engines": {
-    "node": ">=18.0.0 <=22.x.x",
+    "node": ">=18.0.0 <=24.x.x",
     "npm": ">=6.0.0"
   }
 }

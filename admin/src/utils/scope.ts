@@ -69,7 +69,13 @@ export function readCookie(): CookieState {
 export function writeCookie(state: CookieState): void {
   if (typeof document === 'undefined') return;
   const value = encodeURIComponent(JSON.stringify(state));
-  document.cookie = `${COOKIE_NAME}=${value}; path=/; max-age=${ONE_YEAR}`;
+  // A text filter's value is whatever the editor typed, so it can carry
+  // something they'd rather not send in the clear: `Secure` keeps the cookie
+  // off plain-HTTP requests, and it is set only when the admin is already on
+  // HTTPS, since a Secure cookie is silently dropped over http://localhost.
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie =
+    `${COOKIE_NAME}=${value}; path=/; max-age=${ONE_YEAR}; SameSite=Lax${secure}`;
 }
 
 /**
