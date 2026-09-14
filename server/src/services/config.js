@@ -48,9 +48,15 @@ module.exports = ({ strapi }) => {
     return out;
   };
 
+  // The same gate getSchema() uses, so nothing can be stored that the settings
+  // UI never lists — an entry for a single type or a plugin content type would
+  // sit in the store unmanageable.
+  const isConfigurable = (uid, ct) =>
+    !!ct && uid.startsWith('api::') && ct.kind === 'collectionType';
+
   const validFieldsFor = (uid, fields) => {
     const ct = strapi.contentTypes[uid];
-    if (!ct) return [];
+    if (!isConfigurable(uid, ct)) return [];
     return (Array.isArray(fields) ? fields : []).filter((field) => {
       if (field === 'createdAt') return true;
       if (field === 'publishedAt' && ct.options && ct.options.draftAndPublish) return true;
@@ -62,7 +68,7 @@ module.exports = ({ strapi }) => {
     const clean = {};
     if (config && typeof config === 'object') {
       for (const [uid, raw] of Object.entries(config)) {
-        if (!strapi.contentTypes[uid]) continue;
+        if (!isConfigurable(uid, strapi.contentTypes[uid])) continue;
         const fields = [...new Set(validFieldsFor(uid, normalizeEntry(raw)))];
         if (fields.length) clean[uid] = fields;
       }
@@ -80,7 +86,7 @@ module.exports = ({ strapi }) => {
     const out = [];
 
     for (const [uid, ct] of Object.entries(strapi.contentTypes)) {
-      if (!uid.startsWith('api::') || ct.kind !== 'collectionType') continue;
+      if (!isConfigurable(uid, ct)) continue;
 
       const attributes = {};
       for (const [name, attr] of Object.entries(ct.attributes || {})) {

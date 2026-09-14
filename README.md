@@ -61,8 +61,8 @@ configured field renders a control:
 | text-ish        | text input, case-insensitive "contains"   | `filters[field][$containsi]=<text>`  |
 | `datetime`      | date-range preset dropdown                | `filters[field][$gte]=<iso>`         |
 
-Text-ish means `string`, `text`, `richtext`, `uid` and `email`. `blocks` and
-`json` are excluded — they're `jsonb` columns, where `$containsi` doesn't mean
+Text-ish means `string`, `text`, `richtext`, `uid` and `email`. `password` is
+never offered, and `blocks` / `json` are excluded — they're `jsonb` columns, where `$containsi` doesn't mean
 what it does on a text column. Typing is debounced by 400 ms, so the list
 refetches once you pause rather than once per keystroke.
 
@@ -111,9 +111,11 @@ Config is stored in the plugin store under the key `filterConfig`:
 ```
 
 Content types with no selected fields are dropped rather than stored empty, and
-the server re-validates every field name on save — an unknown field, or one
-whose attribute isn't filterable, is discarded regardless of what the request
-sends.
+the server re-validates every save against the same gate the settings UI uses:
+only `api::` collection types, and only fields whose attribute is actually
+filterable. Anything else — a single type, a plugin content type, an unknown or
+non-filterable field — is discarded regardless of what the request sends, so
+nothing can end up in the store that the UI can't manage.
 
 ---
 
@@ -133,12 +135,17 @@ All routes are **admin-type** (authenticated admin), mounted under `/global-filt
 
 - **Off by default** for every content type — nothing appears until fields are
   picked in Settings → Global Filters.
-- **Relation options are capped at 100 rows** per target, sorted by `name`. A
-  target with more entries shows the first page only, and stale-id pruning is
-  skipped for it (a valid id is never dropped, but a dead one isn't cleaned up
-  either).
-- **Relation option labels** come from `name`, `title` or `slug`, in that order,
-  falling back to `#<id>`.
+- **Relation options are capped at 100 rows** per target and sorted client-side
+  by label. A target with more entries shows the first page only, and stale-id
+  pruning is skipped for it (a valid id is never dropped, but a dead one isn't
+  cleaned up either). The sort is deliberately not delegated to the API: a
+  `sort=name:ASC` throws `Attribute name not found on model <uid>` for any
+  target without a `name` field — a self-referencing `parents` / `children`
+  relation, say.
+- **Relation option labels** come from the first non-empty of `name`, `title`
+  or `slug`, falling back to `#<id>`.
+- If a target's options can't be loaded, that filter renders empty and no
+  stored id is judged stale — the rest of the bar keeps working.
 - The filter row is **portalled** next to the Content Manager's own action bar,
   because `listView.actions` is the only injection zone available. A future
   Strapi restructure of that DOM could move the row back inside the toolbar.

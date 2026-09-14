@@ -1,6 +1,6 @@
 {
   "name": "strapi-plugin-global-filters",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Always-on, sticky list filters for the Strapi 5 Content Manager: pick which fields become quick filters per content type; selections persist across reloads and navigation.",
   "keywords": [
     "strapi",

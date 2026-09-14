@@ -32,6 +32,7 @@ import {
 type Option = { value: string; label: string };
 
 const TEXT_TYPES = ['string', 'text', 'richtext', 'uid', 'email'];
+const EMPTY_ATTRIBUTES: Record<string, any> = {};
 
 /**
  * Loaded options for one relation target. `complete` means the response wasn't
@@ -40,13 +41,26 @@ const TEXT_TYPES = ['string', 'text', 'richtext', 'uid', 'email'];
  */
 type OptionSet = { options: Option[]; complete: boolean };
 
+const firstNonEmpty = (...values: any[]): string => {
+  for (const v of values) {
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  return '';
+};
+
+/**
+ * Sorted here rather than by the API: a `sort=name:ASC` throws
+ * "Attribute name not found on model <uid>" on any target without a `name`
+ * field (a self-referencing page relation, say), and the failed request would
+ * take the whole bar's readiness down with it.
+ */
 const relationOptions = (results: any[]): Option[] =>
   (results ?? [])
     .map((r) => ({
       value: String(r.id),
-      label: r.name ?? r.title ?? r.slug ?? `#${r.id}`,
+      label: firstNonEmpty(r.name, r.title, r.slug) || `#${r.id}`,
     }))
-    .filter((o) => o.label);
+    .sort((a, b) => a.label.localeCompare(b.label));
 
 const RELATION_PAGE_SIZE = 100;
 const TEXT_DEBOUNCE_MS = 400;
@@ -68,6 +82,8 @@ const TextFilter = ({
 }) => {
   const [draft, setDraft] = React.useState(value);
   const committedRef = React.useRef(value);
+  const commitRef = React.useRef(onCommit);
+  commitRef.current = onCommit;
 
   React.useEffect(() => {
     if (value !== committedRef.current) {
@@ -80,15 +96,15 @@ const TextFilter = ({
     if (draft === committedRef.current) return;
     const timer = setTimeout(() => {
       committedRef.current = draft;
-      onCommit(draft);
+      commitRef.current(draft);
     }, TEXT_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [draft, onCommit]);
+  }, [draft]);
 
   const clear = () => {
     committedRef.current = '';
     setDraft('');
-    onCommit('');
+    commitRef.current('');
   };
 
   return (
@@ -131,7 +147,7 @@ const FilterBar = () => {
 
   const model: string | undefined = ctx?.model;
   const collectionType: string | undefined = ctx?.collectionType;
-  const attributes: Record<string, any> = ctx?.contentType?.attributes ?? {};
+  const attributes: Record<string, any> = ctx?.contentType?.attributes ?? EMPTY_ATTRIBUTES;
 
   const [fields, setFields] = React.useState<string[] | null>(null);
   const [relOptions, setRelOptions] = React.useState<Record<string, OptionSet>>({});
@@ -187,21 +203,34 @@ const FilterBar = () => {
     let cancelled = false;
     targets.forEach((target) => {
       if (relOptions[target]) return;
-      get(`/content-manager/collection-types/${target}?pageSize=${RELATION_PAGE_SIZE}&sort=name:ASC`)
+      get(`/content-manager/collection-types/${target}?pageSize=${RELATION_PAGE_SIZE}`)
         .then((res) => {
           if (cancelled) return;
           const data = res.data as any;
-          const options = relationOptions(data?.results);
+          const results = Array.isArray(data?.results) ? data.results : [];
+          const options = relationOptions(results);
           const total = data?.pagination?.total;
           setRelOptions((prev) => ({
             ...prev,
             [target]: {
               options,
-              complete: typeof total === 'number' ? total <= options.length : options.length < RELATION_PAGE_SIZE,
+              // Off the raw row count, not the mapped options — an unlabelled
+              // row still proves the page was full.
+              complete:
+                typeof total === 'number'
+                  ? total <= results.length
+                  : results.length < RELATION_PAGE_SIZE,
             },
           }));
         })
-        .catch(() => {});
+        .catch(() => {
+          if (cancelled) return;
+          // Record the failure instead of leaving the target unresolved:
+          // `relationsReady` waits on every target, so one dead request would
+          // otherwise stop the cookie from seeding anything at all. `complete:
+          // false` keeps it from judging any stored id stale.
+          setRelOptions((prev) => ({ ...prev, [target]: { options: [], complete: false } }));
+        });
     });
     return () => {
       cancelled = true;
@@ -214,9 +243,9 @@ const FilterBar = () => {
   );
 
   const applyValues = React.useCallback(
-    (next: Record<string, string>) => {
+    (next: Record<string, string>, replaceHistory = false) => {
       const filters = writeValues(query?.filters, descriptors, next);
-      setQuery({ filters, page: 1 }, 'push');
+      setQuery({ filters, page: 1 }, 'push', replaceHistory);
     },
     [query, descriptors, setQuery]
   );
@@ -313,7 +342,7 @@ const FilterBar = () => {
     }
 
     if (cookieChanged) writeCookie(cookie);
-    if (changed) applyValues(seeded);
+    if (changed) applyValues(seeded, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, descriptors, relationsReady]);
 
