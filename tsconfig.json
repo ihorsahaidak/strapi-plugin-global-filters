@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "moduleResolution": "Bundler"
+  },
+  "include": [],
+  "exclude": ["node_modules", "dist"]
+}

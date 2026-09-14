@@ -1,0 +1,298 @@
+import * as React from 'react';
+import {
+  Flex,
+  Typography,
+  Combobox,
+  ComboboxOption,
+  SingleSelect,
+  SingleSelectOption,
+} from '@strapi/design-system';
+import {
+  useFetchClient,
+  useQueryParams,
+  unstable_useContentManagerContext as useContentManagerContext,
+} from '@strapi/strapi/admin';
+
+import { fetchGlobalFiltersConfig } from '../utils/configClient';
+import {
+  Descriptor,
+  readValues,
+  writeValues,
+  readCookie,
+  writeCookie,
+  cookieSeed,
+  cookieStore,
+  prettyLabel,
+  DATE_PRESETS,
+} from '../utils/scope';
+
+type Option = { value: string; label: string };
+
+/**
+ * Loaded options for one relation target. `complete` means the response wasn't
+ * truncated by the page size, so "not in this list" reliably means "gone" —
+ * without it we must not treat an unknown id as stale.
+ */
+type OptionSet = { options: Option[]; complete: boolean };
+
+const relationOptions = (results: any[]): Option[] =>
+  (results ?? [])
+    .map((r) => ({
+      value: String(r.id),
+      label: r.name ?? r.title ?? r.slug ?? `#${r.id}`,
+    }))
+    .filter((o) => o.label);
+
+const RELATION_PAGE_SIZE = 100;
+
+/**
+ * Config-driven sticky filter bar injected into the Content Manager list view.
+ * The set of fields is configured per content type in
+ * Settings → Global Filters. Selections are reflected in the list
+ * `filters` query param and remembered in a cookie.
+ */
+const FilterBar = () => {
+  const ctx = useContentManagerContext() as any;
+  const { get } = useFetchClient();
+  const [{ query }, setQuery] = useQueryParams<any>();
+
+  const model: string | undefined = ctx?.model;
+  const collectionType: string | undefined = ctx?.collectionType;
+  const attributes: Record<string, any> = ctx?.contentType?.attributes ?? {};
+
+  const [fields, setFields] = React.useState<string[] | null>(null);
+  const [relOptions, setRelOptions] = React.useState<Record<string, OptionSet>>({});
+
+  // Load the configured filter fields for this content type.
+  React.useEffect(() => {
+    if (!model || collectionType !== 'collection-types') {
+      setFields([]);
+      return;
+    }
+    let cancelled = false;
+    fetchGlobalFiltersConfig(get).then((cfg) => {
+      if (!cancelled) setFields(cfg[model] ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [model, collectionType, get]);
+
+  const descriptors: Descriptor[] = React.useMemo(() => {
+    if (collectionType !== 'collection-types') return [];
+    return (fields ?? [])
+      .map((field) => {
+        // Timestamp fields aren't always present in the schema attributes.
+        const isTimestamp = ['createdAt', 'updatedAt', 'publishedAt'].includes(field);
+        const attr = attributes[field];
+        if (attr?.type === 'datetime' || isTimestamp) {
+          return { field, kind: 'dateRange' } as Descriptor;
+        }
+        if (!attr) return null;
+        if (attr.type === 'relation' && attr.target) {
+          return { field, kind: 'relation', target: attr.target } as Descriptor;
+        }
+        if (attr.type === 'enumeration') {
+          return { field, kind: 'enumeration', values: attr.enum ?? [] } as Descriptor;
+        }
+        if (attr.type === 'boolean') {
+          return { field, kind: 'boolean' } as Descriptor;
+        }
+        return null;
+      })
+      .filter(Boolean) as Descriptor[];
+  }, [fields, attributes, collectionType]);
+
+  // Fetch options for each distinct relation target.
+  React.useEffect(() => {
+    const targets = Array.from(
+      new Set(descriptors.filter((d) => d.kind === 'relation').map((d) => d.target!))
+    );
+    let cancelled = false;
+    targets.forEach((target) => {
+      if (relOptions[target]) return;
+      get(`/content-manager/collection-types/${target}?pageSize=${RELATION_PAGE_SIZE}&sort=name:ASC`)
+        .then((res) => {
+          if (cancelled) return;
+          const data = res.data as any;
+          const options = relationOptions(data?.results);
+          const total = data?.pagination?.total;
+          setRelOptions((prev) => ({
+            ...prev,
+            [target]: {
+              options,
+              complete: typeof total === 'number' ? total <= options.length : options.length < RELATION_PAGE_SIZE,
+            },
+          }));
+        })
+        .catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [descriptors, get, relOptions]);
+
+  const values = React.useMemo(
+    () => readValues(query, descriptors),
+    [query, descriptors]
+  );
+
+  const applyValues = React.useCallback(
+    (next: Record<string, string>) => {
+      const filters = writeValues(query?.filters, descriptors, next);
+      setQuery({ filters, page: 1 }, 'push');
+    },
+    [query, descriptors, setQuery]
+  );
+
+  const onChange = React.useCallback(
+    (d: Descriptor, value: string) => {
+      const next = { ...values, [d.field]: value };
+      if (!value) delete next[d.field];
+      applyValues(next);
+      writeCookie(cookieStore(readCookie(), model!, d, value));
+    },
+    [values, applyValues, model]
+  );
+
+  const relationDescriptors = React.useMemo(
+    () => descriptors.filter((d) => d.kind === 'relation'),
+    [descriptors]
+  );
+
+  // Don't act on relation values before we know what ids actually exist.
+  const relationsReady = React.useMemo(
+    () => relationDescriptors.every((d) => relOptions[d.target!] !== undefined),
+    [relationDescriptors, relOptions]
+  );
+
+  /**
+   * A stored id is only meaningful while the record still exists. Numeric ids
+   * are not stable across a restore / re-import — those delete and re-insert
+   * every row, so the database hands out fresh ids. A cookie (or a refreshed,
+   * bookmarked URL) holding a pre-restore id would otherwise re-apply a filter
+   * that matches nothing: the list renders empty while this bar shows a blank
+   * select, because the value resolves to no option.
+   *
+   * Only judge an id stale when the option list is COMPLETE, otherwise a target
+   * with more records than one page would have valid ids pruned.
+   */
+  const isStaleRelationValue = React.useCallback(
+    (d: Descriptor, value: string) => {
+      if (!value) return false;
+      const set = relOptions[d.target!];
+      if (!set || !set.complete) return false;
+      return !set.options.some((o) => o.value === value);
+    },
+    [relOptions]
+  );
+
+  // Seed from the cookie once per (model, config) when the URL has no value,
+  // and drop any stale value already sitting in the URL or the cookie.
+  const seededRef = React.useRef('');
+  React.useEffect(() => {
+    if (!model || descriptors.length === 0 || !relationsReady) return;
+    const sig = `${model}:${descriptors.map((d) => d.field).join(',')}`;
+    if (seededRef.current === sig) return;
+    seededRef.current = sig;
+
+    let cookie = readCookie();
+    let cookieChanged = false;
+    const seeded = { ...values };
+    let changed = false;
+
+    for (const d of descriptors) {
+      // Already in the URL (refresh, bookmark, shared link) — keep it unless
+      // it points at something that no longer exists.
+      if (seeded[d.field]) {
+        if (isStaleRelationValue(d, seeded[d.field])) {
+          delete seeded[d.field];
+          changed = true;
+          cookie = cookieStore(cookie, model, d, '');
+          cookieChanged = true;
+        }
+        continue;
+      }
+      const seed = cookieSeed(cookie, model, d);
+      if (!seed) continue;
+      if (isStaleRelationValue(d, seed)) {
+        // Forget it rather than re-applying a filter that can't match.
+        cookie = cookieStore(cookie, model, d, '');
+        cookieChanged = true;
+        continue;
+      }
+      seeded[d.field] = seed;
+      changed = true;
+    }
+
+    if (cookieChanged) writeCookie(cookie);
+    if (changed) applyValues(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, descriptors, relationsReady]);
+
+  if (collectionType !== 'collection-types' || descriptors.length === 0) return null;
+
+  return (
+    <Flex gap={2} alignItems="flex-end" wrap="wrap" paddingTop={2} paddingBottom={4}>
+      {descriptors.map((d) => (
+        <Flex key={d.field} direction="column" alignItems="stretch" gap={1} width="16rem">
+          <Typography variant="pi" fontWeight="bold" textColor="neutral600">
+            {prettyLabel(d.field)}
+          </Typography>
+          {d.kind === 'relation' ? (
+            <Combobox
+              size="S"
+              placeholder={`All ${prettyLabel(d.field).toLowerCase()}`}
+              aria-label={`Filter by ${prettyLabel(d.field)}`}
+              value={values[d.field] ?? ''}
+              onChange={(v?: string) => onChange(d, v ?? '')}
+              onClear={() => onChange(d, '')}
+            >
+              {(relOptions[d.target!]?.options ?? []).map((o) => (
+                <ComboboxOption key={o.value} value={o.value}>
+                  {o.label}
+                </ComboboxOption>
+              ))}
+            </Combobox>
+          ) : (
+            <SingleSelect
+              size="S"
+              placeholder={
+                d.kind === 'dateRange'
+                  ? `${prettyLabel(d.field).replace(/ At$/, '')}: any time`
+                  : `All ${prettyLabel(d.field).toLowerCase()}`
+              }
+              aria-label={`Filter by ${prettyLabel(d.field)}`}
+              value={values[d.field] ?? ''}
+              onChange={(v: string | number) => onChange(d, v === undefined ? '' : String(v))}
+              onClear={() => onChange(d, '')}
+            >
+              {d.kind === 'dateRange'
+                ? DATE_PRESETS.map((p) => (
+                    <SingleSelectOption key={p.key} value={p.key}>
+                      {p.label}
+                    </SingleSelectOption>
+                  ))
+                : d.kind === 'boolean'
+                  ? [
+                      <SingleSelectOption key="true" value="true">
+                        Yes
+                      </SingleSelectOption>,
+                      <SingleSelectOption key="false" value="false">
+                        No
+                      </SingleSelectOption>,
+                    ]
+                  : (d.values ?? []).map((v) => (
+                      <SingleSelectOption key={v} value={v}>
+                        {v}
+                      </SingleSelectOption>
+                    ))}
+            </SingleSelect>
+          )}
+        </Flex>
+      ))}
+    </Flex>
+  );
+};
+
+export default FilterBar;
