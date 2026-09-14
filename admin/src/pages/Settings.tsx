@@ -7,7 +7,7 @@ import { prettyLabel } from '../utils/scope';
 import { clearGlobalFiltersConfigCache, GlobalFiltersConfig } from '../utils/configClient';
 
 type AttrMeta = {
-  type: 'relation' | 'enumeration' | 'boolean' | 'datetime';
+  type: 'relation' | 'enumeration' | 'boolean' | 'datetime' | 'text';
   target?: string;
   enum?: string[];
 };
@@ -23,6 +23,7 @@ const attrHint = (attr: AttrMeta) => {
   if (attr.type === 'relation') return shortTarget(attr.target);
   if (attr.type === 'enumeration') return `${(attr.enum ?? []).length} values`;
   if (attr.type === 'datetime') return 'date range';
+  if (attr.type === 'text') return 'contains';
   return 'yes / no';
 };
 
@@ -30,6 +31,7 @@ const GROUPS: Array<{ key: string; label: string; match: (a: AttrMeta) => boolea
   { key: 'relation', label: 'Relations', match: (a) => a.type === 'relation' },
   { key: 'choice', label: 'Choices', match: (a) => a.type === 'enumeration' || a.type === 'boolean' },
   { key: 'date', label: 'Dates', match: (a) => a.type === 'datetime' },
+  { key: 'text', label: 'Text', match: (a) => a.type === 'text' },
 ];
 
 const SettingsPage = () => {

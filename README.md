@@ -58,8 +58,16 @@ configured field renders a control:
 | `relation`      | searchable dropdown of related entries    | `filters[field][id][$eq]=<id>`       |
 | `enumeration`   | value dropdown                            | `filters[field][$eq]=<value>`        |
 | `boolean`       | Yes / No dropdown                         | `filters[field][$eq]=<true\|false>`  |
-| `createdAt`     | date-range preset dropdown                | `filters[createdAt][$gte]=<iso>`     |
-| `publishedAt`   | date-range preset dropdown (D&P only)     | `filters[publishedAt][$gte]=<iso>`   |
+| text-ish        | text input, case-insensitive "contains"   | `filters[field][$containsi]=<text>`  |
+| `datetime`      | date-range preset dropdown                | `filters[field][$gte]=<iso>`         |
+
+Text-ish means `string`, `text`, `richtext`, `uid` and `email`. `blocks` and
+`json` are excluded — they're `jsonb` columns, where `$containsi` doesn't mean
+what it does on a text column. Typing is debounced by 400 ms, so the list
+refetches once you pause rather than once per keystroke.
+
+`createdAt` is always offered, `publishedAt` on draft-and-publish types, and any
+`datetime` attribute of your own gets the same date-range control.
 
 Field names are auto-detected; noisy relations (`createdBy`, `updatedBy`,
 `localizations`, any `admin::user` or users-permissions relation) are never
@@ -68,7 +76,10 @@ Last year (365 d)** — cutoffs snap to start-of-day so they're stable within a 
 
 Selections persist in the `global-filters:scope` cookie: relation picks stick
 across content types (keyed by target uid, so a "Website" pick follows you
-everywhere websites are referenced), enum / boolean / date picks per content type.
+everywhere websites are referenced), enum / boolean / date / text picks per
+content type. When one content type has **two relations to the same target**
+(a self-referencing `parents` / `children` pair, say) they'd collide in that
+shared bucket, so both fall back to per-content-type storage instead.
 
 Only **collection types** are handled; single types have no list view.
 
@@ -88,14 +99,14 @@ targets with more records than one page never lose valid selections.
 
 Registered via `createSettingSection` as **Settings → Global Filters → Filters**:
 every `api::` collection type with its filterable fields grouped
-**Relations / Choices / Dates**. Saving shows a **"Reload to apply"** prompt —
+**Relations / Choices / Dates / Text**. Saving shows a **"Reload to apply"** prompt —
 the config is fetched once per page load and cached across admin chunks.
 
 Config is stored in the plugin store under the key `filterConfig`:
 
 ```jsonc
 {
-  "api::page.page": ["websites", "countries", "page_type", "createdAt"]
+  "api::page.page": ["websites", "countries", "page_type", "title", "createdAt"]
 }
 ```
 

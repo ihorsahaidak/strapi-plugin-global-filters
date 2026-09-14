@@ -6,7 +6,9 @@ import {
   ComboboxOption,
   SingleSelect,
   SingleSelectOption,
+  Field,
 } from '@strapi/design-system';
+import { Cross } from '@strapi/icons';
 import {
   useFetchClient,
   useQueryParams,
@@ -28,6 +30,8 @@ import {
 
 type Option = { value: string; label: string };
 
+const TEXT_TYPES = ['string', 'text', 'richtext', 'uid', 'email'];
+
 /**
  * Loaded options for one relation target. `complete` means the response wasn't
  * truncated by the page size, so "not in this list" reliably means "gone" —
@@ -44,6 +48,67 @@ const relationOptions = (results: any[]): Option[] =>
     .filter((o) => o.label);
 
 const RELATION_PAGE_SIZE = 100;
+const TEXT_DEBOUNCE_MS = 400;
+
+/**
+ * A text filter types one character at a time, but each committed value pushes
+ * a history entry and refetches the list — so hold the keystrokes locally and
+ * only commit once typing pauses. The local value resets whenever the
+ * committed one changes underneath it (seeding, back button, another control).
+ */
+const TextFilter = ({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  onCommit: (next: string) => void;
+}) => {
+  const [draft, setDraft] = React.useState(value);
+  const committedRef = React.useRef(value);
+
+  React.useEffect(() => {
+    if (value !== committedRef.current) {
+      committedRef.current = value;
+      setDraft(value);
+    }
+  }, [value]);
+
+  React.useEffect(() => {
+    if (draft === committedRef.current) return;
+    const timer = setTimeout(() => {
+      committedRef.current = draft;
+      onCommit(draft);
+    }, TEXT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [draft, onCommit]);
+
+  const clear = () => {
+    committedRef.current = '';
+    setDraft('');
+    onCommit('');
+  };
+
+  return (
+    <Field.Root name={`global-filters-${label}`}>
+      <Field.Input
+        size="S"
+        aria-label={`Filter by ${label}`}
+        placeholder={`${label} contains…`}
+        value={draft}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
+        endAction={
+          draft ? (
+            <Field.Action label={`Clear ${label}`} onClick={clear}>
+              <Cross />
+            </Field.Action>
+          ) : undefined
+        }
+      />
+    </Field.Root>
+  );
+};
 
 /**
  * Config-driven sticky filter bar injected into the Content Manager list view.
@@ -98,6 +163,9 @@ const FilterBar = () => {
         if (attr.type === 'boolean') {
           return { field, kind: 'boolean' } as Descriptor;
         }
+        if (TEXT_TYPES.includes(attr.type)) {
+          return { field, kind: 'text' } as Descriptor;
+        }
         return null;
       })
       .filter(Boolean) as Descriptor[];
@@ -145,19 +213,30 @@ const FilterBar = () => {
     [query, descriptors, setQuery]
   );
 
+  const relationDescriptors = React.useMemo(
+    () => descriptors.filter((d) => d.kind === 'relation'),
+    [descriptors]
+  );
+
+  const duplicateTargets = React.useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const d of relationDescriptors) seen.set(d.target!, (seen.get(d.target!) ?? 0) + 1);
+    return new Set([...seen].filter(([, count]) => count > 1).map(([target]) => target));
+  }, [relationDescriptors]);
+
+  const isPerField = React.useCallback(
+    (d: Descriptor) => d.kind === 'relation' && duplicateTargets.has(d.target!),
+    [duplicateTargets]
+  );
+
   const onChange = React.useCallback(
     (d: Descriptor, value: string) => {
       const next = { ...values, [d.field]: value };
       if (!value) delete next[d.field];
       applyValues(next);
-      writeCookie(cookieStore(readCookie(), model!, d, value));
+      writeCookie(cookieStore(readCookie(), model!, d, value, isPerField(d)));
     },
-    [values, applyValues, model]
-  );
-
-  const relationDescriptors = React.useMemo(
-    () => descriptors.filter((d) => d.kind === 'relation'),
-    [descriptors]
+    [values, applyValues, model, isPerField]
   );
 
   // Don't act on relation values before we know what ids actually exist.
@@ -208,16 +287,16 @@ const FilterBar = () => {
         if (isStaleRelationValue(d, seeded[d.field])) {
           delete seeded[d.field];
           changed = true;
-          cookie = cookieStore(cookie, model, d, '');
+          cookie = cookieStore(cookie, model, d, '', isPerField(d));
           cookieChanged = true;
         }
         continue;
       }
-      const seed = cookieSeed(cookie, model, d);
+      const seed = cookieSeed(cookie, model, d, isPerField(d));
       if (!seed) continue;
       if (isStaleRelationValue(d, seed)) {
         // Forget it rather than re-applying a filter that can't match.
-        cookie = cookieStore(cookie, model, d, '');
+        cookie = cookieStore(cookie, model, d, '', isPerField(d));
         cookieChanged = true;
         continue;
       }
@@ -254,6 +333,12 @@ const FilterBar = () => {
                 </ComboboxOption>
               ))}
             </Combobox>
+          ) : d.kind === 'text' ? (
+            <TextFilter
+              label={prettyLabel(d.field)}
+              value={values[d.field] ?? ''}
+              onCommit={(next) => onChange(d, next)}
+            />
           ) : (
             <SingleSelect
               size="S"

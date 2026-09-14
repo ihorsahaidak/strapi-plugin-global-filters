@@ -8,7 +8,12 @@
  */
 
 const STORE_KEY = 'filterConfig';
-const FILTERABLE_TYPES = ['relation', 'enumeration', 'boolean'];
+const FILTERABLE_TYPES = ['relation', 'enumeration', 'boolean', 'datetime'];
+
+// Text-ish columns, filtered with a case-insensitive "contains" input.
+// `blocks` and `json` are excluded: they're jsonb, where $containsi doesn't
+// mean what it does on a text column.
+const TEXT_TYPES = ['string', 'text', 'richtext', 'uid', 'email'];
 
 // Noise never worth offering as a filter.
 const EXCLUDED_FIELDS = new Set(['createdBy', 'updatedBy', 'localizations']);
@@ -22,7 +27,7 @@ module.exports = ({ strapi }) => {
     if (attr.type === 'relation') {
       return !!attr.target && !EXCLUDED_RELATION_TARGETS.has(attr.target);
     }
-    return FILTERABLE_TYPES.includes(attr.type);
+    return FILTERABLE_TYPES.includes(attr.type) || TEXT_TYPES.includes(attr.type);
   };
 
   // Accepts both the bare array form and `{ fields: [...] }`, so a config
@@ -68,8 +73,8 @@ module.exports = ({ strapi }) => {
 
   /**
    * Schema shown in the settings UI: every api:: collection type with its
-   * relation / enumeration / boolean attributes (noise excluded) plus the
-   * createdAt / publishedAt date-range filters.
+   * relation / enumeration / boolean / datetime / text attributes (noise
+   * excluded) plus the createdAt / publishedAt date-range filters.
    */
   const getSchema = () => {
     const out = [];
@@ -83,6 +88,8 @@ module.exports = ({ strapi }) => {
         if (attr.type === 'relation') attributes[name] = { type: 'relation', target: attr.target };
         else if (attr.type === 'enumeration') attributes[name] = { type: 'enumeration', enum: attr.enum || [] };
         else if (attr.type === 'boolean') attributes[name] = { type: 'boolean' };
+        else if (attr.type === 'datetime') attributes[name] = { type: 'datetime' };
+        else attributes[name] = { type: 'text' };
       }
 
       attributes.createdAt = { type: 'datetime' };

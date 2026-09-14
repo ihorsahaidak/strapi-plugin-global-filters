@@ -1,4 +1,4 @@
-export type FieldKind = 'relation' | 'enumeration' | 'boolean' | 'dateRange';
+export type FieldKind = 'relation' | 'enumeration' | 'boolean' | 'dateRange' | 'text';
 
 export type Descriptor = {
   field: string;
@@ -72,9 +72,21 @@ export function writeCookie(state: CookieState): void {
   document.cookie = `${COOKIE_NAME}=${value}; path=/; max-age=${ONE_YEAR}`;
 }
 
-/** Seed value (as a string) for a descriptor from the cookie, or ''. */
-export function cookieSeed(state: CookieState, uid: string, d: Descriptor): string {
-  if (d.kind === 'relation' && d.target) return state.relations[d.target] ?? '';
+/**
+ * Seed value (as a string) for a descriptor from the cookie, or ''.
+ *
+ * `perField` forces the per-content-type bucket for a relation that would
+ * otherwise share the target-keyed one with a sibling — a content type with
+ * two relations to the same target (Page's `parents` and `children`) must not
+ * have a pick on one seed the other.
+ */
+export function cookieSeed(
+  state: CookieState,
+  uid: string,
+  d: Descriptor,
+  perField = false
+): string {
+  if (d.kind === 'relation' && d.target && !perField) return state.relations[d.target] ?? '';
   return state.fields[uid]?.[d.field] ?? '';
 }
 
@@ -83,13 +95,14 @@ export function cookieStore(
   state: CookieState,
   uid: string,
   d: Descriptor,
-  value: string
+  value: string,
+  perField = false
 ): CookieState {
   const next: CookieState = {
     relations: { ...state.relations },
     fields: { ...state.fields },
   };
-  if (d.kind === 'relation' && d.target) {
+  if (d.kind === 'relation' && d.target && !perField) {
     if (value) next.relations[d.target] = value;
     else delete next.relations[d.target];
   } else {
@@ -127,6 +140,9 @@ export function readValues(query: any, descriptors: Descriptor[]): Record<string
         const preset = isoToPreset(String(gte));
         if (preset) values[d.field] = preset;
       }
+    } else if (d.kind === 'text') {
+      const v = clause?.$containsi;
+      if (v != null) values[d.field] = String(v);
     } else {
       const v = clause?.$eq;
       if (v != null) values[d.field] = String(v);
@@ -160,6 +176,8 @@ export function writeValues(
     } else if (d.kind === 'dateRange') {
       const iso = presetCutoffISO(raw);
       if (iso) next.push({ [d.field]: { $gte: iso } });
+    } else if (d.kind === 'text') {
+      next.push({ [d.field]: { $containsi: raw } });
     } else {
       next.push({ [d.field]: { $eq: raw } });
     }
