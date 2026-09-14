@@ -7,6 +7,7 @@ import {
   SingleSelect,
   SingleSelectOption,
   Field,
+  IconButton,
 } from '@strapi/design-system';
 import { Cross } from '@strapi/icons';
 import {
@@ -100,9 +101,16 @@ const TextFilter = ({
         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
         endAction={
           draft ? (
-            <Field.Action label={`Clear ${label}`} onClick={clear}>
+            <IconButton
+              label={`Clear ${label}`}
+              variant="ghost"
+              size="XS"
+              type="button"
+              onClick={clear}
+              onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+            >
               <Cross />
-            </Field.Action>
+            </IconButton>
           ) : undefined
         }
       />
